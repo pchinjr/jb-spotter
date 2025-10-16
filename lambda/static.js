@@ -1,5 +1,6 @@
-import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.handler = void 0;
 const HTML_CONTENT = `
 <!DOCTYPE html>
 <html>
@@ -131,14 +132,14 @@ const HTML_CONTENT = `
 </body>
 </html>
 `;
-
-export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayProxyResult> => {
-  return {
-    statusCode: 200,
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Access-Control-Allow-Origin': '*'
-    },
-    body: HTML_CONTENT
-  };
+const handler = async (event) => {
+    return {
+        statusCode: 200,
+        headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Access-Control-Allow-Origin': '*'
+        },
+        body: HTML_CONTENT
+    };
 };
+exports.handler = handler;

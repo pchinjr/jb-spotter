@@ -29,5 +29,5 @@ This will create a `jeff-barr.png` file optimized for your app (300x400px, trans
 
 After processing, upload to your S3 bucket:
 ```bash
-aws s3 cp jeff-barr.png s3://your-bucket-name/jeff-barr.png
+aws s3 cp jeff-barr.png s3://jeff-barr-spotter-photobucket-ndjewrwwl4kc/jeff-barr.png
 ```

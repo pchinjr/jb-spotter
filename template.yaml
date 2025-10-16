@@ -40,17 +40,12 @@ Resources:
 
   ProcessImageFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        Minify: true
-        Target: es2020
-        Sourcemap: false
-        EntryPoints:
-          - process-image.ts
     Properties:
       CodeUri: lambda/
-      Handler: process-image.handler
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 1024
+      Timeout: 30
       Environment:
         Variables:
           LOG_LEVEL: INFO
@@ -73,17 +68,10 @@ Resources:
 
   StaticSite:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: esbuild
-      BuildProperties:
-        Minify: true
-        Target: es2020
-        Sourcemap: false
-        EntryPoints:
-          - static.ts
     Properties:
       CodeUri: lambda/
       Handler: static.handler
+      Runtime: nodejs20.x
       Events:
         Root:
           Type: Api

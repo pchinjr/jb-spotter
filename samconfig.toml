@@ -17,6 +17,8 @@ confirm_changeset = true
 resolve_s3 = true
 region = "us-east-1"
 parameter_overrides = "LogLevel=\"INFO\""
+s3_prefix = "jeff-barr-spotter"
+image_repositories = []
 
 [default.package.parameters]
 resolve_s3 = true
