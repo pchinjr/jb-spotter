@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Jeff Barr Selfie Superimposer
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: nodejs18.x
+    Environment:
+      Variables:
+        BUCKET_NAME: !Ref PhotoBucket
+
+Resources:
+  PhotoBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteProcessedImagesAfter7Days
+            Status: Enabled
+            ExpirationInDays: 7
+            Prefix: processed/
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [GET, PUT, POST]
+            AllowedOrigins: ['*']
+            MaxAge: 3600
+
+  ProcessImageFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2020
+        Sourcemap: false
+        EntryPoints:
+          - process-image.ts
+    Properties:
+      CodeUri: lambda/
+      Handler: process-image.handler
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+      Events:
+        ProcessImage:
+          Type: Api
+          Properties:
+            Path: /process
+            Method: post
+        ProcessImageOptions:
+          Type: Api
+          Properties:
+            Path: /process
+            Method: options
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref PhotoBucket
+        - S3WritePolicy:
+            BucketName: !Ref PhotoBucket
+
+  StaticSite:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: true
+        Target: es2020
+        Sourcemap: false
+        EntryPoints:
+          - static.ts
+    Properties:
+      CodeUri: lambda/
+      Handler: static.handler
+      Events:
+        Root:
+          Type: Api
+          Properties:
+            Path: /
+            Method: get
+        Static:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: get
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
