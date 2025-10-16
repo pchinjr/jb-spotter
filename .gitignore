@@ -40,3 +40,6 @@ config
 # Temporary files
 *.tmp
 .cache/
+
+# Claude
+.claude/ 
