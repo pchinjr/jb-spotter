@@ -20,7 +20,7 @@ Once you have a Jeff Barr image:
 npm install sharp
 
 # Process your image
-node format-jeff-image.js path/to/your/jeff-image.jpg
+node format-jeff-image.js /home/pchinjr/Code/jb-spotter/jeff-barr.png
 ```
 
 This will create a `jeff-barr.png` file optimized for your app (300x400px, transparent background).
