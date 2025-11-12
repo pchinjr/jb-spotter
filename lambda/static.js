@@ -351,7 +351,7 @@ const HOME_PAGE_HTML = `
             processBtn.disabled = true;
             processBtn.textContent = 'Processing...';
             resultCard?.classList.remove('ready');
-            result.innerHTML = '<p>Creating your Jeff Barr selfie...</p>';
+            result.innerHTML = '<p>Looking for Jeff ...</p>';
             result.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
             const reader = new FileReader();
@@ -394,7 +394,7 @@ const HOME_PAGE_HTML = `
                 }
 
                 processBtn.disabled = false;
-                processBtn.textContent = 'Beam Jeff Into My Selfie';
+                processBtn.textContent = 'Look for Jeff ...';
             };
             reader.readAsDataURL(selectedFile);
         });
