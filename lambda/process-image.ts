@@ -1,9 +1,11 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { RekognitionClient, DetectFacesCommand, BoundingBox } from '@aws-sdk/client-rekognition';
 import sharp from 'sharp';
 
 const s3Client = new S3Client({});
+const rekognitionClient = new RekognitionClient({});
 const BUCKET_NAME = process.env.BUCKET_NAME!;
 const LOG_LEVEL = process.env.LOG_LEVEL || 'INFO';
 
@@ -103,6 +105,170 @@ async function validateImageBuffer(buffer: Buffer): Promise<sharp.Metadata> {
   }
 }
 
+async function detectFaces(imageBuffer: Buffer): Promise<BoundingBox[]> {
+  try {
+    const command = new DetectFacesCommand({
+      Image: {
+        Bytes: imageBuffer
+      },
+      Attributes: ['DEFAULT']
+    });
+
+    const response = await rekognitionClient.send(command);
+
+    log('INFO', 'Face detection completed', {
+      faceCount: response.FaceDetails?.length || 0
+    });
+
+    return response.FaceDetails?.map(face => face.BoundingBox!).filter(Boolean) || [];
+  } catch (error: any) {
+    log('WARN', 'Face detection failed, using default positioning', {
+      error: error.message
+    });
+    return [];
+  }
+}
+
+interface Position {
+  top: number;
+  left: number;
+}
+
+function calculateSmartPosition(
+  faces: BoundingBox[],
+  targetWidth: number,
+  targetHeight: number,
+  jeffWidth: number,
+  jeffHeight: number
+): Position {
+  // If no faces detected, use default upper-right positioning
+  if (faces.length === 0) {
+    log('INFO', 'No faces detected, using default positioning');
+    return {
+      top: Math.floor(targetHeight * 0.1),
+      left: targetWidth - jeffWidth - Math.floor(targetWidth * 0.05)
+    };
+  }
+
+  // Convert bounding boxes to pixel coordinates
+  const faceRegions = faces.map(box => ({
+    left: (box.Left || 0) * targetWidth,
+    top: (box.Top || 0) * targetHeight,
+    width: (box.Width || 0) * targetWidth,
+    height: (box.Height || 0) * targetHeight
+  }));
+
+  log('INFO', 'Calculating smart position', {
+    faceCount: faces.length,
+    faceRegions
+  });
+
+  // Define candidate positions (corners and edges)
+  const candidates: Position[] = [
+    // Top-right corner
+    { top: Math.floor(targetHeight * 0.05), left: targetWidth - jeffWidth - Math.floor(targetWidth * 0.05) },
+    // Top-left corner
+    { top: Math.floor(targetHeight * 0.05), left: Math.floor(targetWidth * 0.05) },
+    // Bottom-right corner
+    { top: targetHeight - jeffHeight - Math.floor(targetHeight * 0.05), left: targetWidth - jeffWidth - Math.floor(targetWidth * 0.05) },
+    // Bottom-left corner
+    { top: targetHeight - jeffHeight - Math.floor(targetHeight * 0.05), left: Math.floor(targetWidth * 0.05) },
+    // Right edge, middle
+    { top: Math.floor((targetHeight - jeffHeight) / 2), left: targetWidth - jeffWidth - Math.floor(targetWidth * 0.05) },
+    // Left edge, middle
+    { top: Math.floor((targetHeight - jeffHeight) / 2), left: Math.floor(targetWidth * 0.05) }
+  ];
+
+  // Score each candidate position (higher score = less overlap with faces)
+  const scores = candidates.map(pos => {
+    let score = 1000; // Start with high max score
+
+    // Calculate Jeff's bounding box
+    const jeffBox = {
+      left: pos.left,
+      top: pos.top,
+      right: pos.left + jeffWidth,
+      bottom: pos.top + jeffHeight
+    };
+
+    // Penalize overlap with faces (VERY heavily)
+    let hasOverlap = false;
+    for (const face of faceRegions) {
+      // Add padding around faces to create a "no-go zone"
+      const facePadding = Math.max(face.width * 0.2, face.height * 0.2);
+      const faceBox = {
+        left: face.left - facePadding,
+        top: face.top - facePadding,
+        right: face.left + face.width + facePadding,
+        bottom: face.top + face.height + facePadding
+      };
+
+      // Check for overlap
+      const overlapLeft = Math.max(jeffBox.left, faceBox.left);
+      const overlapTop = Math.max(jeffBox.top, faceBox.top);
+      const overlapRight = Math.min(jeffBox.right, faceBox.right);
+      const overlapBottom = Math.min(jeffBox.bottom, faceBox.bottom);
+
+      if (overlapLeft < overlapRight && overlapTop < overlapBottom) {
+        const overlapArea = (overlapRight - overlapLeft) * (overlapBottom - overlapTop);
+        const jeffArea = jeffWidth * jeffHeight;
+        const overlapPercentage = (overlapArea / jeffArea) * 100;
+
+        // VERY heavy penalty for overlapping faces (essentially eliminates this position)
+        score -= overlapPercentage * 50;
+        hasOverlap = true;
+      }
+    }
+
+    // Only consider distance bonus if there's no overlap
+    if (!hasOverlap) {
+      // Slight preference for positions near faces (creates photobomb effect)
+      // but not too close
+      for (const face of faceRegions) {
+        const faceCenter = {
+          x: face.left + face.width / 2,
+          y: face.top + face.height / 2
+        };
+
+        const jeffCenter = {
+          x: pos.left + jeffWidth / 2,
+          y: pos.top + jeffHeight / 2
+        };
+
+        const distance = Math.sqrt(
+          Math.pow(faceCenter.x - jeffCenter.x, 2) +
+          Math.pow(faceCenter.y - jeffCenter.y, 2)
+        );
+
+        // Prefer positions that are reasonably close to faces but not overlapping
+        const minPreferredDistance = Math.max(face.width, face.height) * 1.5;
+        const maxPreferredDistance = targetWidth * 0.5;
+
+        if (distance >= minPreferredDistance && distance <= maxPreferredDistance) {
+          // Give bonus for being in the "sweet spot"
+          const normalizedDistance = (distance - minPreferredDistance) / (maxPreferredDistance - minPreferredDistance);
+          score += (1 - Math.abs(normalizedDistance - 0.5) * 2) * 50;
+        }
+      }
+    }
+
+    return { position: pos, score };
+  });
+
+  // Find the best position
+  const best = scores.reduce((prev, current) =>
+    current.score > prev.score ? current : prev
+  );
+
+  log('INFO', 'Smart position calculated', {
+    selectedPosition: best.position,
+    score: best.score,
+    allScores: scores.map(s => ({ pos: s.position, score: s.score }))
+  });
+
+  return best.position;
+}
+
 async function getJeffBarrImage(): Promise<Buffer> {
   try {
     const command = new GetObjectCommand({
@@ -133,37 +299,99 @@ async function getJeffBarrImage(): Promise<Buffer> {
 async function compositeImages(
   userImageBuffer: Buffer,
   jeffBarrBuffer: Buffer,
-  metadata: sharp.Metadata
+  metadata: sharp.Metadata,
+  faces: BoundingBox[]
 ): Promise<Buffer> {
-  const targetWidth = 800;
-  const targetHeight = 600;
+  // First, auto-rotate the image based on EXIF to get correct orientation
+  const rotatedImage = await sharp(userImageBuffer)
+    .rotate() // Auto-rotate based on EXIF orientation
+    .toBuffer();
 
-  // Get Jeff Barr image metadata
+  // Get metadata AFTER rotation to get the correct dimensions
+  const rotatedMetadata = await sharp(rotatedImage).metadata();
+  const originalWidth = rotatedMetadata.width || metadata.width || 800;
+  const originalHeight = rotatedMetadata.height || metadata.height || 600;
+  const aspectRatio = originalWidth / originalHeight;
+
+  // Now calculate target dimensions based on the ROTATED dimensions
+  const maxDimension = 1200;
+  let targetWidth: number;
+  let targetHeight: number;
+
+  if (originalWidth > originalHeight) {
+    // Landscape or square
+    targetWidth = Math.min(maxDimension, originalWidth);
+    targetHeight = Math.round(targetWidth / aspectRatio);
+  } else {
+    // Portrait
+    targetHeight = Math.min(maxDimension, originalHeight);
+    targetWidth = Math.round(targetHeight * aspectRatio);
+  }
+
+  log('INFO', 'Image dimensions calculated', {
+    original: { width: originalWidth, height: originalHeight },
+    target: { width: targetWidth, height: targetHeight },
+    aspectRatio,
+    isPortrait: originalHeight > originalWidth
+  });
+
+  // Resize the rotated image
+  const resizedUserImage = await sharp(rotatedImage)
+    .resize(targetWidth, targetHeight, {
+      fit: 'inside', // Preserve aspect ratio
+      withoutEnlargement: true
+    })
+    .toBuffer();
+
+  // Get actual dimensions after resize
+  const resizedMetadata = await sharp(resizedUserImage).metadata();
+  const finalWidth = resizedMetadata.width || targetWidth;
+  const finalHeight = resizedMetadata.height || targetHeight;
+
+  // Get Jeff Barr image metadata and scale it appropriately
   const jeffMetadata = await sharp(jeffBarrBuffer).metadata();
+  const originalJeffWidth = jeffMetadata.width || 300;
+  const originalJeffHeight = jeffMetadata.height || 400;
 
-  // Calculate smart positioning - place Jeff in the upper right area
-  const jeffWidth = jeffMetadata.width || 300;
-  const jeffHeight = jeffMetadata.height || 400;
-  const jeffTop = Math.floor(targetHeight * 0.1); // 10% from top
-  const jeffLeft = targetWidth - jeffWidth - Math.floor(targetWidth * 0.05); // 5% from right
+  // Scale Jeff aggressively so he’s prominent in the shot (>40% width when possible)
+  const jeffScale = Math.min(
+    (finalWidth * 0.45) / originalJeffWidth,
+    (finalHeight * 0.65) / originalJeffHeight
+  );
+
+  const jeffWidth = Math.round(originalJeffWidth * jeffScale);
+  const jeffHeight = Math.round(originalJeffHeight * jeffScale);
+
+  // Resize Jeff's image
+  const resizedJeffBuffer = await sharp(jeffBarrBuffer)
+    .resize(jeffWidth, jeffHeight, {
+      fit: 'inside'
+    })
+    .toBuffer();
+
+  // Calculate smart positioning based on detected faces
+  const position = calculateSmartPosition(
+    faces,
+    finalWidth,
+    finalHeight,
+    jeffWidth,
+    jeffHeight
+  );
 
   log('INFO', 'Compositing images', {
-    targetWidth,
-    targetHeight,
-    jeffPosition: { top: jeffTop, left: jeffLeft, width: jeffWidth, height: jeffHeight },
-    userImageSize: { width: metadata.width, height: metadata.height }
+    finalDimensions: { width: finalWidth, height: finalHeight },
+    jeffDimensions: { width: jeffWidth, height: jeffHeight },
+    jeffPosition: { top: position.top, left: position.left },
+    userImageSize: { width: metadata.width, height: metadata.height },
+    faceCount: faces.length
   });
 
   try {
-    return await sharp(userImageBuffer)
-      .resize(targetWidth, targetHeight, {
-        fit: 'cover',
-        position: 'center'
-      })
+    return await sharp(resizedUserImage)
       .composite([{
-        input: jeffBarrBuffer,
-        top: jeffTop,
-        left: Math.max(0, jeffLeft), // Ensure we don't go negative
+        input: resizedJeffBuffer,
+        top: Math.floor(position.top),
+        left: Math.max(0, Math.floor(position.left)), // Ensure we don't go negative
         blend: 'over'
       }])
       .jpeg({ quality: 90 })
@@ -253,13 +481,17 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       size: `${(imageBuffer.length / 1024).toFixed(2)}KB`
     });
 
+    // Detect faces in the user's image
+    log('DEBUG', 'Detecting faces', { requestId });
+    const faces = await detectFaces(imageBuffer);
+
     // Get Jeff Barr image
     log('DEBUG', 'Fetching Jeff Barr image', { requestId });
     const jeffBarrBuffer = await getJeffBarrImage();
 
-    // Composite images
+    // Composite images with smart positioning
     log('DEBUG', 'Compositing images', { requestId });
-    const processedImage = await compositeImages(imageBuffer, jeffBarrBuffer, metadata);
+    const processedImage = await compositeImages(imageBuffer, jeffBarrBuffer, metadata, faces);
 
     // Upload to S3 and get presigned URL
     log('DEBUG', 'Uploading processed image', { requestId });

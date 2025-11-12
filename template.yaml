@@ -41,8 +41,8 @@ Resources:
   ProcessImageFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: lambda/
-      Handler: index.handler
+      CodeUri: src/
+      Handler: process-image.handler
       Runtime: nodejs20.x
       MemorySize: 1024
       Timeout: 30
@@ -65,11 +65,17 @@ Resources:
             BucketName: !Ref PhotoBucket
         - S3WritePolicy:
             BucketName: !Ref PhotoBucket
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - rekognition:DetectFaces
+              Resource: '*'
 
   StaticSite:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: lambda/
+      CodeUri: src/
       Handler: static.handler
       Runtime: nodejs20.x
       Events:
