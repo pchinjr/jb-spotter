@@ -5,7 +5,7 @@ Description: Jeff Barr Selfie Superimposer
 Globals:
   Function:
     Timeout: 30
-    Runtime: nodejs18.x
+    Runtime: nodejs20.x
     Environment:
       Variables:
         BUCKET_NAME: !Ref PhotoBucket
@@ -41,7 +41,7 @@ Resources:
   ProcessImageFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/
+      CodeUri: lambda/
       Handler: process-image.handler
       Runtime: nodejs20.x
       MemorySize: 1024
@@ -75,7 +75,7 @@ Resources:
   StaticSite:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: src/
+      CodeUri: lambda/
       Handler: static.handler
       Runtime: nodejs20.x
       Events:

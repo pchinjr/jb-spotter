@@ -1,5 +1,6 @@
 # Compiled TypeScript output
 src/
+dist/
 
 # Dependencies
 node_modules/
@@ -42,4 +43,4 @@ config
 .cache/
 
 # Claude
-.claude/ 
+.claude/

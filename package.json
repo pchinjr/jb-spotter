@@ -4,12 +4,8 @@
   "description": "Superimpose Jeff Barr into selfies",
   "scripts": {
     "build": "tsc",
-    "deploy": "sam build && sam deploy"
-  },
-  "dependencies": {
-    "@aws-sdk/client-s3": "^3.450.0",
-    "@aws-sdk/s3-request-presigner": "^3.450.0",
-    "sharp": "^0.32.6"
+    "clean": "rm -rf .aws-sam",
+    "deploy": "npm run clean && npm run build && sam build && sam deploy"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.126",
